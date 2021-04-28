@@ -1,0 +1,184 @@
+---
+title: "script_liste_sp"
+author: "PaulineChauvet"
+date: "09/04/2021"
+output: html_document
+---
+
+## Mettre en place l espace de travail et les variables
+Ici on met en place l espace de travail, on charge la table et on créer les futures variables
+
+Les trois dernières librairies sont des interfaces pour les API de worms, itis et IUCN
+
+```{r}
+library(udunits2)
+library(jsonlite)
+library(httr)
+library(lubridate)
+library(stringr)
+library(tidyverse)
+library(robis)
+library(obistools)
+library(rredlist)#iucn
+library(ritis)#itis
+library(worrms)#worms
+
+setwd("C:/Users/Cédric/Documents/biodiversite/liste_sp")
+```
+## Charger le tableau et préparer et nettoyer les variables
+
+1- Enlever un sp. ou spp. à la fin d'une chaine de caractère
+2- Enlever un espace à la fin d'une chaine de caractère
+
+Ici on utilise la fonction gsub comme ceci : 
+
+gsub('.{2}$', '', name)
+
+Le .{2}$ est l’expression régulière qui correspond aux deux derniers caractères
+
+Le . correspond à n’importe quel caractère, le {2} correspond au motif qui le précède deux fois, et le $ correspond à la fin de la chaîne.
+
+Enlever un espace à la fin d'une chaine de caractère, dela donne donc " {1}$"
+
+```{r}
+table<-read.csv("liste_exhaustive_especes.csv",sep=";",header=T)
+head(table)
+sciName<-gsub(" spp.{1}$","",table$scientificname)
+sciName<-gsub(" sp.{1}$","",sciName)
+sciName<-gsub(" {1}$","",sciName)
+
+worms_url<-"http://www.marinespecies.org/rest"
+itis_url<-"https://services.itis.gov/?q=nameWInd:"
+```
+
+## Mettre en place les espaces API WORMS et ITIS 
+
+Quelles variables veut-on créer et où aller les chercher
+
+
+threatstatus_id<-c()
+establishmentMeans<-c()
+isexotic<-c()
+isinvasive<-c()
+taxongroup_id<-c()
+Worms ou itis Worms ou itis scientificnameid<-c()
+Worms ou itis infraspecificEpithet<-c()
+Worms ou itis identificationQualifier<-c()
+Worms ou itis taxonomicStatus<-c(taxonomicStatus,)
+Worms ou itis acceptedNameUsage<-c(acceptedNameUsage,)
+Worms ou itis acceptedNameUsageID<-c(acceptedNameUsageID,)
+Worms ou itis rank<-c(rank,)
+
+
+## Faire la boucle de recherche des identifiants
+Dans un premier temps, une boucle worms suivit d'une boucle itis si la condition worms est différente de 1
+
+requête worms ou itis ¸a transformer en fonction
+puis boucle for à transformer en map
+for i in length(sciName)
+```{r} 
+
+  #Fonction 1- L espece existe-t-elle dans worms ?
+WormsouItis<-function(b){
+  if (length(b)>0) {
+    wormsouitis<-"worms"}
+  else{
+    wormsouitis<-"itis"
+  }
+   return(wormsouitis)}
+
+  #Fonction 2- chercher les infos dans worms ou itis
+DarCoreInfo<-function(wormsouitis,sciName,i){
+  
+  if(wormsouitis=="worms"){	
+    sciNameI<-str_replace_all(sciName[i], pattern = " ", replacement = "%20" )
+    worms_sciName<-fromJSON(paste(worms_url,"AphiaRecordsByName",paste(sciNameI,"?like=true&marine_only=false&offset=1",sep=""),sep="/"))
+    
+    aphiaID<-paste("worms",worms_sciName$AphiaID[1],sep=":")
+    scientificName<-worms_sciName$scientificname[1]
+	  acceptedNameUsage<-worms_sciName$valid_name[1]
+    acceptedNameUsageID<-worms_sciName$valid_AphiaID[1]
+    taxonomicStatus<-paste(worms_sciName$status[1],worms_sciName$unacceptreason[1],sep=" ")
+    rank<-worms_sciName$rank[1]
+    }
+  else {
+    #url itis  besoin Genre\ espece\ sousespece, il faut donc modifier nomscientific
+    sciNameI<-str_replace_all(sciName[i], pattern = " ", replacement = "\\\\%20" ) 
+	  try(itis_sciName<-fromJSON(paste(itis_url,sciNameI,"&wt=json",sep="")),silent=TRUE)
+    #L API itis ne done pas les acceptedNameUsage si le statut est accepté, la fonction les faits donc correspondre au nom scientifique trouvé dans la table initiale  
+    
+    if (itis_sciName$response$numFound==0){
+      aphiaID<-"not found"
+      scientificName<-sciName[i]
+      rank<-"not found"
+      acceptedNameUsage<-"not found"
+      acceptedNameUsageID<-"not found"
+      taxonomicStatus<-"not found"
+    }  else if (itis_sciName$response$docs$usage[1]=="accepted" | itis_sciName$response$docs$usage[1]=="valid"){
+      aphiaID<-paste("itis",itis_sciName$response$docs$tsn[1],sep=":")
+      scientificName<-itis_sciName$response$docs$nameWInd[1]
+      rank<-itis_sciName$response$docs$rank[1]
+      acceptedNameUsage<-scientificName
+      acceptedNameUsageID<-aphiaID
+      taxonomicStatus<-itis_sciName$response$docs$usage[1]
+      } else {
+	    aphiaID<-paste("itis",itis_sciName$response$docs$tsn[1],sep=":")
+      scientificName<-itis_sciName$response$docs$nameWInd[1]
+      rank<-itis_sciName$response$docs$rank[1]
+      acceptedNameUsage<-itis_sciName$response$docs$synonyms[[1]]
+      acceptedNameUsageID<-itis_sciName$response$docs$acceptedTSN[[1]]
+      taxonomicStatus<-paste(itis_sciName$response$docs$usage[1],itis_sciName$response$docs$unacceptReason[1],sep=" ")
+    }
+    }
+table_info_Dar<-data.frame("aphiaID"=aphiaID,"scientificName"=scientificName,"acceptedNameUsage"=acceptedNameUsage,"acceptedNameUsageID"=acceptedNameUsageID,"taxonomicStatus"=taxonomicStatus,"rank"=rank)
+return(table_info_Dar)
+}
+
+  #Fonction3- Aller chercher les infos dans IUCN
+  
+  #Fonction 4- La boucle finale, une fonction qui intègre les autres fonctions
+
+ILESTOULEBONHEURILESTOU<-function(sciName,a,d){
+  table_darcoreinfo<-data.frame(aphiaID=NA,scientificName=NA,acceptedNameUsage=NA,acceptedNameUsageID=NA,taxonomicStatus=NA,rank=NA)
+  
+  for (i in a : d){
+    sciNameI<-str_replace_all(sciName[i], pattern = " ", replacement = "%20" )
+    b<-c()
+    try(b<-fromJSON(paste(worms_url,"AphiaRecordsByName",paste(sciNameI,"?like=true&marine_only=false&offset=1",sep=""),sep="/")),silent=TRUE)
+	  wormsouitis<-WormsouItis(b)
+  #récupération des infos
+
+    darcoreinfo<-DarCoreInfo(wormsouitis,sciName,i)
+    table_darcoreinfo<-rbind(table_darcoreinfo,darcoreinfo)
+    print(table_darcoreinfo[,1:2])
+  }
+  write.csv(table_darcoreinfo,"table_darcoreinfo.csv",sep=";")
+}
+
+
+
+a=1
+d=length(sciName)
+
+table_darcoreinfo<-data.frame(aphiaID=NA,scientificName=NA,acceptedNameUsage=NA,acceptedNameUsageID=NA,taxonomicStatus=NA,rank=NA)
+
+for (i in a : d){
+    sciNameI<-str_replace_all(sciName[i], pattern = " ", replacement = "%20" )
+    b<-c()
+    try(b<-fromJSON(paste(worms_url,"AphiaRecordsByName",paste(sciNameI,"?like=true&marine_only=false&offset=1",sep=""),sep="/")),silent=TRUE)
+	  wormsouitis<-WormsouItis(b)
+  #récupération des infos
+
+    darcoreinfo<-DarCoreInfo(wormsouitis,sciName,i)
+    table_darcoreinfo<-rbind(table_darcoreinfo,darcoreinfo)
+    print(table_darcoreinfo[,1:2])
+  }
+  write.csv(table_darcoreinfo,"table_darcoreinfo.csv",sep=";")
+
+
+## Faire la boucle de recherche des statuts de menace
+Dans un second temps, avec les iD worms et itis, faire une recherche de statut de menace d'espèce threatstatus
+
+
+
+
